@@ -335,16 +335,17 @@ def train_gating_network(
             with torch.no_grad():
                 t = torch.rand(B, device=device)
                 sig = sigma_schedule(t, sigma_min, sigma_max)           # (B,)
-                eps = torch.randn_like(x0)                              # ε
-                x_t = x0 + sig[:, None, None, None] * eps              # x_t
+                z = torch.randn_like(x0)                                # z ~ N(0, I)
+                sig_4d = sig[:, None, None, None]
+                x_t = x0 + sig_4d * z                                  # x_t
 
                 # Forward all K experts
                 scores = ensemble(x_t, t)                               # (K, B, 1, 28, 28)
-                sig_sq = (sig ** 2)[:, None, None, None]                # (B, 1, 1, 1)
-                predicted_noise = sig_sq.unsqueeze(0) * scores          # (K, B, 1, 28, 28)
+                predicted_noise = (sig_4d ** 2).unsqueeze(0) * scores   # (K, B, 1, 28, 28)
+                target = (sig_4d * z).unsqueeze(0)                      # ε = σz
 
                 # Per-expert errors
-                ell_k = ((predicted_noise - eps.unsqueeze(0)) ** 2).sum(dim=(2, 3, 4))  # (K, B)
+                ell_k = ((predicted_noise - target) ** 2).sum(dim=(2, 3, 4))  # (K, B)
 
                 # Ground-truth WTA labels
                 k_star = ell_k.argmin(dim=0)                            # (B,)

@@ -143,23 +143,24 @@ def smcl_loss(
     # --- Step 1: Sample noise level and perturbation ---
     t = torch.rand(B, device=device)                            # t ~ U(0,1)
     sig = sigma_schedule(t, sigma_min, sigma_max)               # σ(t), shape (B,)
-    eps = torch.randn_like(x0)                                  # ε ~ N(0, I)
-    x_t = x0 + sig[:, None, None, None] * eps                  # x_t = x_0 + σ(t)ε
+    z = torch.randn_like(x0)                                    # z ~ N(0, I)
+    sig_4d = sig[:, None, None, None]                           # (B, 1, 1, 1)
+    x_t = x0 + sig_4d * z                                      # x_t = x_0 + σ(t) z
 
     # --- Step 2: Forward pass through ALL K experts ---
     # scores: (K, B, 1, 28, 28)
     scores = ensemble(x_t, t)
 
     # --- Step 3: Compute per-expert noise predictions (Eq. 8) ---
-    # x^k = σ(t)² · s_{θ_k}(x_t, t)
-    sig_sq = (sig ** 2)[:, None, None, None]                    # (B, 1, 1, 1)
+    # x^k = σ(t)² · s_{θ_k}(x_t, t)  should ≈ ε = σ z
+    sig_sq = sig_4d ** 2                                        # (B, 1, 1, 1)
     predicted_noise = sig_sq.unsqueeze(0) * scores              # (K, B, 1, 28, 28)
+    target = (sig_4d * z).unsqueeze(0)                          # (1, B, 1, 28, 28) — ε = σ z
 
     # --- Step 4: Per-example, per-expert unreduced losses ---
     # ℓ_k(i) = ‖x^k(i) − ε(i)‖²  summed over spatial dimensions (C, H, W)
-    # eps is (B, 1, 28, 28), broadcast to (K, B, 1, 28, 28)
-    per_pixel_sq_err = (predicted_noise - eps.unsqueeze(0)) ** 2  # (K, B, 1, 28, 28)
-    ell_k = per_pixel_sq_err.sum(dim=(2, 3, 4))                  # (K, B)
+    per_pixel_sq_err = (predicted_noise - target) ** 2           # (K, B, 1, 28, 28)
+    ell_k = per_pixel_sq_err.sum(dim=(2, 3, 4))                 # (K, B)
 
     # --- Step 5: Winner selection — ELEMENT-WISE per example (Eq. 9) ---
     # k*(i) = argmin_k ℓ_k(i)

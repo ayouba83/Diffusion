@@ -249,18 +249,20 @@ def tweedie_loss(
     t = torch.rand(B, device=device)
     sig = sigma_schedule(t, sigma_min, sigma_max)  # (B,)
 
-    # Sample noise ε ~ N(0, σ(t)² I)
-    eps = torch.randn_like(x0)
-    x_t = x0 + sig[:, None, None, None] * eps       # X_t = X_0 + σ(t) ε
+    # Sample unit noise z ~ N(0, I) and form ε = σ(t) z ~ N(0, σ(t)² I)
+    z = torch.randn_like(x0)
+    sig_4d = sig[:, None, None, None]
+    x_t = x0 + sig_4d * z                           # X_t = X_0 + σ(t) z
 
     # Model predicts s_θ(x_t, t)
     score = model(x_t, t)                            # (B, 1, 28, 28)
 
-    # The quantity σ(t)² s_θ should approximate ε
-    predicted_noise = sig[:, None, None, None] ** 2 * score
+    # σ(t)² s_θ should approximate ε = σ(t) z  (the SCALED noise, not unit z)
+    predicted_noise = sig_4d ** 2 * score
+    target = sig_4d * z                              # ε = σ z
 
     # MSE loss: ‖σ(t)² s_θ(x_t, t) − ε‖²
-    loss = F.mse_loss(predicted_noise, eps)
+    loss = F.mse_loss(predicted_noise, target)
     return loss
 
 
