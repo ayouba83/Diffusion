@@ -152,14 +152,12 @@ def smcl_loss(
     scores = ensemble(x_t, t)
 
     # --- Step 3: Compute per-expert noise predictions (Eq. 8) ---
-    # x^k = σ(t)² · s_{θ_k}(x_t, t)  should ≈ ε = σ z
-    sig_sq = sig_4d ** 2                                        # (B, 1, 1, 1)
-    predicted_noise = sig_sq.unsqueeze(0) * scores              # (K, B, 1, 28, 28)
-    target = (sig_4d * z).unsqueeze(0)                          # (1, B, 1, 28, 28) — ε = σ z
+    # σ(t) · s_{θ_k}(x_t, t)  should ≈ z (unit noise, uniformly weighted)
+    predicted_noise = sig_4d.unsqueeze(0) * scores              # (K, B, 1, 28, 28)
 
     # --- Step 4: Per-example, per-expert unreduced losses ---
-    # ℓ_k(i) = ‖x^k(i) − ε(i)‖²  summed over spatial dimensions (C, H, W)
-    per_pixel_sq_err = (predicted_noise - target) ** 2           # (K, B, 1, 28, 28)
+    # ℓ_k(i) = ‖σ s_θ_k(i) − z(i)‖²  summed over spatial dims (C, H, W)
+    per_pixel_sq_err = (predicted_noise - z.unsqueeze(0)) ** 2   # (K, B, 1, 28, 28)
     ell_k = per_pixel_sq_err.sum(dim=(2, 3, 4))                 # (K, B)
 
     # --- Step 5: Winner selection — ELEMENT-WISE per example (Eq. 9) ---

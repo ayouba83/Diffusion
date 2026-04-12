@@ -257,12 +257,11 @@ def tweedie_loss(
     # Model predicts s_θ(x_t, t)
     score = model(x_t, t)                            # (B, 1, 28, 28)
 
-    # σ(t)² s_θ should approximate ε = σ(t) z  (the SCALED noise, not unit z)
-    predicted_noise = sig_4d ** 2 * score
-    target = sig_4d * z                              # ε = σ z
-
-    # MSE loss: ‖σ(t)² s_θ(x_t, t) − ε‖²
-    loss = F.mse_loss(predicted_noise, target)
+    # σ(t) s_θ should approximate z (unit noise) — uniformly weighted noise prediction.
+    # This is equivalent to ‖σ² s_θ − ε‖² / σ² with ε = σz, which removes the
+    # σ²-weighting that otherwise makes the model ignore low-noise precision.
+    predicted_noise = sig_4d * score
+    loss = F.mse_loss(predicted_noise, z)
     return loss
 
 

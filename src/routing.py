@@ -341,11 +341,10 @@ def train_gating_network(
 
                 # Forward all K experts
                 scores = ensemble(x_t, t)                               # (K, B, 1, 28, 28)
-                predicted_noise = (sig_4d ** 2).unsqueeze(0) * scores   # (K, B, 1, 28, 28)
-                target = (sig_4d * z).unsqueeze(0)                      # ε = σz
+                predicted_noise = sig_4d.unsqueeze(0) * scores          # σ s_θ ≈ z
 
-                # Per-expert errors
-                ell_k = ((predicted_noise - target) ** 2).sum(dim=(2, 3, 4))  # (K, B)
+                # Per-expert errors (uniform weighting)
+                ell_k = ((predicted_noise - z.unsqueeze(0)) ** 2).sum(dim=(2, 3, 4))  # (K, B)
 
                 # Ground-truth WTA labels
                 k_star = ell_k.argmin(dim=0)                            # (B,)
