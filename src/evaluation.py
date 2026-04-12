@@ -193,26 +193,22 @@ def _sample_with_trajectory(
 
     x = initial_noise.clone()
 
-    # Determine which ODE steps to snapshot
-    # We have N iterations (i from N-1 down to 0); skip the sentinel at i=N-1
-    active_steps = list(reversed(range(N - 1)))  # N-2, N-3, ..., 0
-    total_active = len(active_steps)
+    # Determine which ODE steps to snapshot (evenly spaced across N steps)
     snapshot_indices = set(
-        [active_steps[int(j * total_active / (n_snapshots - 1))]
-         for j in range(n_snapshots - 1)]
+        [int(j * N / (n_snapshots - 1)) for j in range(n_snapshots - 1)]
     )
-    snapshot_indices.add(active_steps[-1])  # always include the last step
+    snapshot_indices.add(N - 1)  # always include the last step
 
     trajectory = [x.clone().cpu()]  # initial noise
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]
+    for i in range(N):
         sig_curr = sigmas[i]
+        sig_next = sigmas[i + 1]
 
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        t_val = _sigma_to_time(sig_next, sigma_min, sigma_max)
+        t_val = _sigma_to_time(sig_curr, sigma_min, sigma_max)
         t_batch = t_val.expand(x.shape[0]).to(x.device)
 
         # Choose the score source
@@ -225,7 +221,7 @@ def _sample_with_trajectory(
         else:
             score = ensemble.experts[0](x, t_batch)
 
-        x = x + (sig_next - sig_curr) * sig_next * score
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
         if i in snapshot_indices:
             trajectory.append(x.clone().cpu())
@@ -357,14 +353,14 @@ def record_gating_decisions(
     t_values = []
     expert_counts = defaultdict(list)  # k → [count_at_step_0, count_at_step_1, ...]
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]
+    for i in range(N):
         sig_curr = sigmas[i]
+        sig_next = sigmas[i + 1]
 
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        t_val = _sigma_to_time(sig_next, sigma_min, sigma_max)
+        t_val = _sigma_to_time(sig_curr, sigma_min, sigma_max)
         t_batch = t_val.expand(n_samples).to(device)
 
         # Gating decision
@@ -382,7 +378,7 @@ def record_gating_decisions(
             if mask.any():
                 score[mask] = ensemble.experts[k](x[mask], t_batch[mask])
 
-        x = x + (sig_next - sig_curr) * sig_next * score
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
     return {
         "t_values": t_values,

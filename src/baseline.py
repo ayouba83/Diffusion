@@ -294,28 +294,28 @@ def sample_euler(
     x_0 : denoised samples (B, 1, 28, 28)
     """
     sigmas = discrete_sigmas(N, sigma_min, sigma_max).to(initial_noise.device)
-    # sigmas[0] = σ_max, ..., sigmas[N] = 0
+    # sigmas[0] = σ_max, sigmas[1], ..., sigmas[N-1] = σ_min, sigmas[N] = 0
 
-    x = initial_noise  # x_N
+    x = initial_noise  # starts at noise level σ_max
 
-    for i in reversed(range(N)):
-        # We go from index i+1 → i
-        sig_next = sigmas[i + 1]   # σ_{i+1}
-        sig_curr = sigmas[i]       # σ_i
+    for i in range(N):
+        sig_curr = sigmas[i]       # current noise level (σ_max at start)
+        sig_next = sigmas[i + 1]   # target noise level  (one step cleaner)
 
-        # When σ_{i+1} = 0 (the appended sentinel), the update is
-        # mathematically zero.  Skip to avoid log(0) = -inf in the
-        # sigma→time inversion and the resulting NaN propagation.
-        if sig_next == 0:
+        # At the very last step sig_next = 0 (appended sentinel).
+        # The step is still valid: it denoises from σ_min down to 0.
+        # But if sig_curr = 0 somehow, skip (no-op).
+        if sig_curr == 0:
             continue
 
-        # Corresponding continuous time for σ_{i+1}
-        # Invert σ(t) = σ_min^{1-t} · σ_max^t  →  t = log(σ/σ_min) / log(σ_max/σ_min)
-        t_val = torch.log(sig_next / sigma_min) / math.log(sigma_max / sigma_min)
+        # Evaluate score at the CURRENT noise level of x
+        t_val = torch.log(sig_curr / sigma_min) / math.log(sigma_max / sigma_min)
         t_batch = t_val.expand(x.shape[0]).to(x.device)
 
         score = model(x, t_batch)
-        x = x + (sig_next - sig_curr) * sig_next * score
+
+        # Euler step: (sig_next - sig_curr) < 0, so update opposes score → toward data
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
     return x
 
@@ -350,37 +350,36 @@ def sample_heun(
 
     x = initial_noise
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]  # σ_{i+1}
-        sig_curr = sigmas[i]      # σ_i
+    for i in range(N):
+        sig_curr = sigmas[i]      # current noise level
+        sig_next = sigmas[i + 1]  # target noise level (cleaner)
 
-        # Skip the sentinel σ = 0 step (mathematically a no-op)
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        # Time corresponding to σ_{i+1}
-        t_next = torch.log(sig_next / sigma_min) / math.log(sigma_max / sigma_min)
-        t_next_batch = t_next.expand(x.shape[0]).to(x.device)
+        # Time corresponding to current noise level
+        t_curr = torch.log(sig_curr / sigma_min) / math.log(sigma_max / sigma_min)
+        t_curr_batch = t_curr.expand(x.shape[0]).to(x.device)
 
-        score_next = model(x, t_next_batch)
+        score_curr = model(x, t_curr_batch)
 
         # Euler predictor (first stage)
-        delta = sig_next - sig_curr
-        x_prime = x + delta * sig_next * score_next
+        delta = sig_next - sig_curr  # negative (denoising)
+        x_prime = x + delta * sig_curr * score_curr
 
-        # For the last step (σ_i = 0), Heun correction is not needed
-        # because t_i would be undefined (log(0)).  Fall back to Euler.
-        if sig_curr == 0.0:
+        # For the last step (sig_next = 0), Heun correction is not needed
+        # because t_next would be undefined (log(0)).  Fall back to Euler.
+        if sig_next == 0.0:
             x = x_prime
         else:
-            # Time corresponding to σ_i
-            t_curr = torch.log(sig_curr / sigma_min) / math.log(sigma_max / sigma_min)
-            t_curr_batch = t_curr.expand(x.shape[0]).to(x.device)
+            # Time corresponding to target noise level
+            t_next = torch.log(sig_next / sigma_min) / math.log(sigma_max / sigma_min)
+            t_next_batch = t_next.expand(x.shape[0]).to(x.device)
 
-            score_curr = model(x_prime, t_curr_batch)
+            score_next = model(x_prime, t_next_batch)
 
             # Heun corrector (average of two slopes)
-            x = x + delta * sig_next / 2.0 * (score_next + score_curr)
+            x = x + delta * sig_curr / 2.0 * (score_curr + score_next)
 
     return x
 

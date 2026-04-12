@@ -77,26 +77,21 @@ def sample_single_expert(
     """
     model = ensemble.experts[expert_idx]
     sigmas = discrete_sigmas(N, sigma_min, sigma_max).to(initial_noise.device)
-    # sigmas[0] = σ_max, ..., sigmas[N] = 0
 
     x = initial_noise
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]  # σ_{i+1}
-        sig_curr = sigmas[i]      # σ_i
+    for i in range(N):
+        sig_curr = sigmas[i]
+        sig_next = sigmas[i + 1]
 
-        # When σ_{i+1} = 0 (the appended sentinel), the update is
-        # mathematically zero.  Skip to avoid log(0) = -inf in the
-        # sigma→time inversion and the resulting NaN propagation.
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        t_batch = _sigma_to_time(sig_next, sigma_min, sigma_max)
+        t_batch = _sigma_to_time(sig_curr, sigma_min, sigma_max)
         t_batch = t_batch.expand(x.shape[0]).to(x.device)
 
-        # Fixed expert for ALL steps
         score = model(x, t_batch)
-        x = x + (sig_next - sig_curr) * sig_next * score
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
     return x
 
@@ -171,22 +166,21 @@ def sample_heuristic_routing(
 
     x = initial_noise
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]
+    for i in range(N):
         sig_curr = sigmas[i]
+        sig_next = sigmas[i + 1]
 
-        # Skip the sentinel σ = 0 step (see sample_single_expert comment)
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        t_val = _sigma_to_time(sig_next, sigma_min, sigma_max).item()
+        t_val = _sigma_to_time(sig_curr, sigma_min, sigma_max).item()
         t_batch = torch.full((x.shape[0],), t_val, device=x.device)
 
         # Select expert via the prescribed rule — evaluated at each step
         k = routing_rule(t_val, K)
         score = ensemble.experts[k](x, t_batch)
 
-        x = x + (sig_next - sig_curr) * sig_next * score
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
     return x
 
@@ -423,15 +417,14 @@ def sample_gated_routing(
     x = initial_noise
     B = x.shape[0]
 
-    for i in reversed(range(N)):
-        sig_next = sigmas[i + 1]
+    for i in range(N):
         sig_curr = sigmas[i]
+        sig_next = sigmas[i + 1]
 
-        # Skip the sentinel σ = 0 step (see sample_single_expert comment)
-        if sig_next == 0:
+        if sig_curr == 0:
             continue
 
-        t_val = _sigma_to_time(sig_next, sigma_min, sigma_max)
+        t_val = _sigma_to_time(sig_curr, sigma_min, sigma_max)
         t_batch = t_val.expand(B).to(x.device)
 
         # --- Gating: predict which expert to use per example ---
@@ -439,21 +432,18 @@ def sample_gated_routing(
         expert_assignment = logits.argmax(dim=1)  # (B,)
 
         # --- Compute the score by routing each example to its expert ---
-        # We group examples by expert to avoid running all K experts on
-        # all B examples (memory-efficient).
         score = torch.zeros_like(x)           # (B, 1, 28, 28)
 
         for k in range(K):
             mask = (expert_assignment == k)    # (B,) bool
             if mask.any():
-                # Extract the subset of examples assigned to expert k
-                x_subset = x[mask]            # (n_k, 1, 28, 28)
-                t_subset = t_batch[mask]      # (n_k,)
+                x_subset = x[mask]
+                t_subset = t_batch[mask]
                 score_k = ensemble.experts[k](x_subset, t_subset)
                 score[mask] = score_k
 
         # --- Euler ODE step (purely deterministic, no noise added) ---
-        x = x + (sig_next - sig_curr) * sig_next * score
+        x = x + (sig_next - sig_curr) * sig_curr * score
 
     return x
 
